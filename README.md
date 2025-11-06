@@ -82,7 +82,7 @@ acme.sh --install-cronjob
 
 ## nginx.conf 
 > `//`根据自己需求配置
-```conf
+```
 user root;
 worker_processes auto;
 error_log /var/log/nginx/error.log notice;
@@ -117,8 +117,8 @@ http {
         listen 8443 ssl default_server;
         listen [::]:8443 ssl default_server;
         server_name _;
-	      ssl_certificate      //自己申请的证书;
-	      ssl_certificate_key  //自己申请的证书;
+        ssl_certificate      //自己申请的证书;
+        ssl_certificate_key  //自己申请的证书;
         ssl_protocols        TLSv1.2 TLSv1.3;
         ssl_ciphers          HIGH:!aNULL:!MD5;
         #ssl_reject_handshake on;
@@ -128,8 +128,8 @@ http {
         listen 8443 ssl http2;
         listen [::]:8443 ssl http2;
         server_name //自己域名;
-	      ssl_certificate      //自己申请的证书;
-	      ssl_certificate_key  //自己申请的证书;
+        ssl_certificate      //自己申请的证书;
+        ssl_certificate_key  //自己申请的证书;
         ssl_session_tickets off;
         ssl_protocols TLSv1.3;
         ssl_ecdh_curve X25519:prime256v1:secp384r1;
