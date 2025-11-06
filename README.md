@@ -1,4 +1,12 @@
 # sing-box-server
+## ufw
+```
+sudo ufw allow 8443 comment 'nginx HTTPS (TCP+UDP)'
+sudo ufw allow 443 comment 'sing-box HTTPS (TCP+UDP)'
+sudo ufw allow 22 comment 'SSH port'
+sudo ufw delete allow 80
+```
+
 ## sing-box 服务端搭建
 > sing-box.conf 下面配置文件中 // 需要删除后运行
 > ./sing-box run -c /root/sing-box.conf -C /root/.sing-box/  
