@@ -24,7 +24,7 @@
       ],
       "tls": {
         "enabled": true,
-        "server_name": "", // 自动支持 h2 域名
+        "server_name": "", // 支持 h2 域名 ,这里我们使用通过 acme 签发证书的域名
         "min_version": "1.3",
         "max_version": "1.3",
         "reality": {
