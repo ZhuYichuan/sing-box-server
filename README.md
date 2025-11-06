@@ -1,6 +1,9 @@
 # sing-box-server
 ## ufw
 ```
+sudo ufw enable
+sudo ufw default allow outgoing
+sudo ufw default deny incoming
 sudo ufw allow 8443 comment 'nginx HTTPS (TCP+UDP)'
 sudo ufw allow 443 comment 'sing-box HTTPS (TCP+UDP)'
 sudo ufw allow 22 comment 'SSH port'
