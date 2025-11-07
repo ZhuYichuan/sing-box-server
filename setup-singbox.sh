@@ -21,7 +21,7 @@ fi
 
 # 输入信息并校验
 while true; do
-  read -rp "请输入你的域名 (例如: dmit1.openlts.com): " DOMAIN
+  read -rp "请输入你的域名 (例如: www.google.com): " DOMAIN
   [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+$ ]] && break
   echo "❌ 域名格式不正确，请重新输入"
 done
