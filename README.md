@@ -205,7 +205,7 @@ http {
     server {
         listen 80;
         listen [::]:80;
-        server_name dmit1.openlts.com;
+        server_name <server_name>;
         return 301 https://$host:8443$request_uri;
     }
 
@@ -213,11 +213,11 @@ http {
     server {
         listen 8443 ssl http2;
         listen [::]:8443 ssl http2;
-        server_name dmit1.openlts.com;
+        server_name <server_name>;
 	root /var/www/movies;
         index index.html;
-	ssl_certificate      /root/.acme.sh/dmit1.openlts.com_ecc/fullchain.cer;
-        ssl_certificate_key  /root/.acme.sh/dmit1.openlts.com_ecc/dmit1.openlts.com.key;
+	ssl_certificate      /root/.acme.sh/<server_name>_ecc/fullchain.cer;
+        ssl_certificate_key  /root/.acme.sh/<server_name>_ecc/<server_name>.key;
         ssl_session_tickets off;
         ssl_protocols TLSv1.3;
         ssl_ecdh_curve X25519:prime256v1:secp384r1;
