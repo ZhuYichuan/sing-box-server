@@ -242,10 +242,8 @@ server {
 
 server {
 
-    listen 8443 ssl;
-    listen [::]:8443 ssl;
-
-    http2 on;
+    listen 8443 ssl http2;
+    listen [::]:8443 ssl http2;
 
     server_name $DOMAIN;
 
