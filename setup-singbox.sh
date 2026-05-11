@@ -193,7 +193,7 @@ server {
     listen 80;
     listen [::]:80;
     server_name $DOMAIN;
-    return 301 https://\$host\$request_uri;
+    return 301 https://\$host:8443\$request_uri;
 }
 
 server {
