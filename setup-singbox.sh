@@ -290,65 +290,45 @@ echo "=================================================="
 
 CONFIG_FILE="/etc/sing-box/config.json"
 
-cat > "$CONFIG_FILE" <<EOCONFIG
-{
-  "log": {
-    "level": "info",
-    "timestamp": true,
-    "output": "/var/log/sing-box/sing-box.log"
-  },
+cat > "$NGINX_FILE" <<EONGINX
+server {
 
-  "inbounds": [
-    {
-      "type": "vless",
+    listen 80;
+    listen [::]:80;
 
-      "tag": "vless-reality",
+    server_name $DOMAIN;
 
-      "listen": "::",
-
-      "listen_port": 443,
-
-      "users": [
-        {
-          "uuid": "$UUID",
-          "flow": "xtls-rprx-vision"
-        }
-      ],
-
-      "sniff": true,
-
-      "tls": {
-
-        "enabled": true,
-
-        "server_name": "$DOMAIN",
-
-        "reality": {
-
-          "enabled": true,
-
-          "handshake": {
-            "server": "$DOMAIN",
-            "server_port": 8443
-          },
-
-          "private_key": "$PRIVATE_KEY",
-
-          "short_id": [
-            "$SHORT_ID"
-          ]
-        }
-      }
-    }
-  ],
-
-  "outbounds": [
-    {
-      "type": "direct"
-    }
-  ]
+    return 301 https://\$host\$request_uri;
 }
-EOCONFIG
+
+server {
+
+    listen 8443 ssl http2;
+    listen [::]:8443 ssl http2;
+
+    server_name $DOMAIN;
+
+    ssl_certificate     $CERT_DIR/fullchain.crt;
+    ssl_certificate_key $CERT_DIR/private.key;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:MozSSL:10m;
+
+    location / {
+
+        proxy_pass https://www.cloudflare.com;
+
+        proxy_ssl_server_name on;
+
+        proxy_set_header Host www.cloudflare.com;
+
+        proxy_set_header User-Agent \$http_user_agent;
+
+    }
+}
+EONGINX
 
 # =========================================================
 # 配置检查
