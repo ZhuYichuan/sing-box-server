@@ -1,252 +1,493 @@
-#!/bin/bash
+cat > install.sh <<'EOF'
+#!/usr/bin/env bash
+
+# =========================================================
+# sing-box Reality + Nginx + acme.sh
+# 幂等安装 / 可重复运行
+# =========================================================
+
 set -e
-exec > >(tee -i /root/setup-singbox.log)
-exec 2>&1
 
-echo "=========================================="
-echo "🔧 Sing-Box + Nginx + acme.sh 自动部署脚本"
-echo "=========================================="
+LOG_FILE="/var/log/singbox-install.log"
 
-# 检查 root 权限
+mkdir -p /var/log
+
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+# =========================================================
+# Root 检查
+# =========================================================
+
 if [ "$EUID" -ne 0 ]; then
-  echo "❌ 请使用 root 权限运行: sudo bash setup-singbox.sh"
-  exit 1
+    echo "请使用 root 运行"
+    exit 1
 fi
 
-# 检查 /root/.sing-box/ 是否存在
-if [ ! -d "/root/.sing-box" ]; then
-  echo "📁 创建目录 /root/.sing-box/"
-  mkdir -p /root/.sing-box
-fi
+# =========================================================
+# 基础目录
+# =========================================================
 
-# 输入信息并校验
-while true; do
-  read -rp "请输入你的域名 (例如: www.google.com): " DOMAIN
-  [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+$ ]] && break
-  echo "❌ 域名格式不正确，请重新输入"
-done
+mkdir -p /etc/sing-box
+mkdir -p /etc/sing-box/reality
+mkdir -p /etc/sing-box/cert
+mkdir -p /var/log/sing-box
 
-while true; do
-  read -rp "请输入你的邮箱 (例如: your@email.com): " EMAIL
-  [[ "$EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] && break
-  echo "❌ 邮箱格式不正确，请重新输入"
-done
+# =========================================================
+# 输入
+# =========================================================
 
+read -rp "请输入域名: " DOMAIN
+read -rp "请输入邮箱: " EMAIL
 read -rp "请输入 Cloudflare API Token: " CF_TOKEN
-read -rp "请输入 Cloudflare Account ID: " CF_ACCOUNT_ID
 
-# 写入环境变量
-echo "🔧 写入 Cloudflare API 环境变量..."
-grep -q CF_Token ~/.bashrc || echo "export CF_Token=\"$CF_TOKEN\"" >> ~/.bashrc
-grep -q CF_Account_ID ~/.bashrc || echo "export CF_Account_ID=\"$CF_ACCOUNT_ID\"" >> ~/.bashrc
-source ~/.bashrc
+# =========================================================
+# Cloudflare API
+# =========================================================
 
+export CF_Token="$CF_TOKEN"
+
+mkdir -p ~/.acme.sh
+
+cat > ~/.acme.sh/account.conf <<EOCF
+SAVED_CF_Token='$CF_TOKEN'
+EOCF
+
+# =========================================================
 # 安装依赖
-echo "🚀 安装依赖..."
-for pkg in curl socat nginx ufw jq; do
-  if ! command -v $pkg &>/dev/null; then
-    apt update -y
-    apt install -y $pkg
-  fi
-done
+# =========================================================
 
+echo
+echo "=================================================="
+echo "安装依赖"
+echo "=================================================="
+
+apt update
+
+DEBIAN_FRONTEND=noninteractive apt install -y \
+    curl \
+    wget \
+    socat \
+    jq \
+    nginx \
+    ufw \
+    uuid-runtime
+
+# =========================================================
 # 安装 sing-box
-if ! command -v sing-box &>/dev/null; then
-  echo "📦 安装 sing-box..."
+# =========================================================
 
-  ARCH=$(dpkg --print-architecture)
+if ! command -v sing-box >/dev/null 2>&1; then
 
-  case "$ARCH" in
-    amd64)
-      SB_ARCH="amd64"
-      ;;
-    arm64)
-      SB_ARCH="arm64"
-      ;;
-    *)
-      echo "❌ 不支持架构: $ARCH"
-      exit 1
-      ;;
-  esac
+    echo
+    echo "=================================================="
+    echo "安装 sing-box"
+    echo "=================================================="
 
-  VERSION="1.12.0"
+    ARCH=$(dpkg --print-architecture)
 
-  URL="https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box_${VERSION}_linux_${SB_ARCH}.deb"
+    case "$ARCH" in
+        amd64)
+            SB_ARCH="amd64"
+            ;;
+        arm64)
+            SB_ARCH="arm64"
+            ;;
+        *)
+            echo "不支持架构: $ARCH"
+            exit 1
+            ;;
+    esac
 
-  echo "⬇️ 下载: $URL"
+    VERSION="1.12.0"
 
-  curl -Lo /tmp/sing-box.deb "$URL"
+    URL="https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box_${VERSION}_linux_${SB_ARCH}.deb"
 
-  dpkg -i /tmp/sing-box.deb
+    wget -O /tmp/sing-box.deb "$URL"
+
+    dpkg -i /tmp/sing-box.deb
+
 fi
 
-# 配置 UFW 防火墙
-echo "🧱 配置防火墙..."
-ufw --force enable
-ufw default allow outgoing
-ufw default deny incoming
-ufw allow 8443/tcp comment 'nginx HTTPS'
-ufw allow 443/tcp comment 'sing-box HTTPS'
-ufw allow 22/tcp comment 'SSH port'
-ufw status | grep -q "80" && ufw delete allow 80
+SB_BIN=$(command -v sing-box)
 
+# =========================================================
 # 安装 acme.sh
-if [ ! -f "$HOME/.acme.sh/acme.sh" ]; then
-  echo "🔑 安装 acme.sh..."
-  curl https://get.acme.sh | sh
-  source ~/.bashrc
+# =========================================================
+
+if [ ! -f ~/.acme.sh/acme.sh ]; then
+
+    echo
+    echo "=================================================="
+    echo "安装 acme.sh"
+    echo "=================================================="
+
+    curl https://get.acme.sh | sh
+
 fi
 
-# 注册 acme 账户
-~/.acme.sh/acme.sh --register-account -m "$EMAIL"
+# =========================================================
+# 切换 Let's Encrypt
+# =========================================================
 
+~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+
+# =========================================================
+# Reality 参数
+# =========================================================
+
+UUID_FILE="/etc/sing-box/reality/uuid"
+PRIVATE_FILE="/etc/sing-box/reality/private.key"
+PUBLIC_FILE="/etc/sing-box/reality/public.key"
+SHORTID_FILE="/etc/sing-box/reality/shortid"
+
+# UUID
+
+if [ -f "$UUID_FILE" ]; then
+
+    UUID=$(cat "$UUID_FILE")
+
+else
+
+    UUID=$(uuidgen)
+
+    echo "$UUID" > "$UUID_FILE"
+
+fi
+
+# Reality Key
+
+if [ -f "$PRIVATE_FILE" ] && [ -f "$PUBLIC_FILE" ]; then
+
+    PRIVATE_KEY=$(cat "$PRIVATE_FILE")
+    PUBLIC_KEY=$(cat "$PUBLIC_FILE")
+
+else
+
+    REALITY_OUTPUT=$($SB_BIN generate reality-keypair)
+
+    PRIVATE_KEY=$(echo "$REALITY_OUTPUT" | grep PrivateKey | awk '{print $2}')
+    PUBLIC_KEY=$(echo "$REALITY_OUTPUT" | grep PublicKey | awk '{print $2}')
+
+    echo "$PRIVATE_KEY" > "$PRIVATE_FILE"
+    echo "$PUBLIC_KEY" > "$PUBLIC_FILE"
+
+fi
+
+# Short ID
+
+if [ -f "$SHORTID_FILE" ]; then
+
+    SHORT_ID=$(cat "$SHORTID_FILE")
+
+else
+
+    SHORT_ID=$($SB_BIN generate rand 8 --hex)
+
+    echo "$SHORT_ID" > "$SHORTID_FILE"
+
+fi
+
+# =========================================================
 # 申请证书
-echo "📜 使用 Cloudflare DNS API 签发证书..."
+# =========================================================
 
-if ! ~/.acme.sh/acme.sh --issue \
-  --dns dns_cf \
-  -d "$DOMAIN" \
-  --keylength ec-256; then
+echo
+echo "=================================================="
+echo "申请 SSL 证书"
+echo "=================================================="
 
-  echo "❌ 证书签发失败"
-  exit 1
-fi
+~/.acme.sh/acme.sh \
+    --register-account \
+    -m "$EMAIL" || true
 
-CERT_PATH="$HOME/.acme.sh/${DOMAIN}_ecc"
+~/.acme.sh/acme.sh \
+    --issue \
+    --dns dns_cf \
+    -d "$DOMAIN" \
+    --keylength ec-256 \
+    --force \
+    --debug
 
-SSL_CERT="$CERT_PATH/fullchain.cer"
-SSL_KEY="$CERT_PATH/$DOMAIN.key"
+CERT_DIR="/etc/sing-box/cert"
 
-# Reality 密钥生成
-echo "🔐 生成 Reality Keypair..."
-REALITY_INFO=$(sing-box generate reality-keypair)
-PRIVATE_KEY=$(echo "$REALITY_INFO" | grep PrivateKey | awk '{print $2}')
-PUBLIC_KEY=$(echo "$REALITY_INFO" | grep PublicKey | awk '{print $2}')
-SHORT_ID=$(sing-box generate rand 8 --hex)
+~/.acme.sh/acme.sh \
+    --install-cert \
+    -d "$DOMAIN" \
+    --ecc \
+    --fullchain-file "$CERT_DIR/fullchain.crt" \
+    --key-file "$CERT_DIR/private.key" \
+    --reloadcmd "systemctl restart nginx sing-box"
 
-# 保存 Reality Key
-echo "$PRIVATE_KEY" > /root/singbox-reality-private.key
-echo "$PUBLIC_KEY" > /root/singbox-reality-public.key
-echo "$SHORT_ID" > /root/singbox-reality-shortid.txt
+# =========================================================
+# nginx
+# =========================================================
 
-# 创建 sing-box.conf
-CONF_FILE="/root/sing-box.conf"
-if [ -f "$CONF_FILE" ]; then
-  echo "📦 备份旧配置 $CONF_FILE -> ${CONF_FILE}.bak"
-  mv "$CONF_FILE" "${CONF_FILE}.bak"
-fi
+echo
+echo "=================================================="
+echo "配置 nginx"
+echo "=================================================="
 
-cat > "$CONF_FILE" <<EOF
+NGINX_FILE="/etc/nginx/sites-available/$DOMAIN.conf"
+
+cat > "$NGINX_FILE" <<EONGINX
+server {
+
+    listen 80;
+    listen [::]:80;
+
+    server_name $DOMAIN;
+
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+
+    listen 8443 ssl;
+    listen [::]:8443 ssl;
+
+    http2 on;
+
+    server_name $DOMAIN;
+
+    ssl_certificate     $CERT_DIR/fullchain.crt;
+    ssl_certificate_key $CERT_DIR/private.key;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:MozSSL:10m;
+
+    location / {
+
+        proxy_pass https://www.cloudflare.com;
+
+        proxy_ssl_server_name on;
+
+        proxy_set_header Host www.cloudflare.com;
+
+        proxy_set_header User-Agent \$http_user_agent;
+
+    }
+}
+EONGINX
+
+ln -sf "$NGINX_FILE" /etc/nginx/sites-enabled/
+
+rm -f /etc/nginx/sites-enabled/default
+
+nginx -t
+
+systemctl restart nginx
+
+# =========================================================
+# sing-box 配置
+# =========================================================
+
+echo
+echo "=================================================="
+echo "配置 sing-box"
+echo "=================================================="
+
+CONFIG_FILE="/etc/sing-box/config.json"
+
+cat > "$CONFIG_FILE" <<EOCONFIG
 {
   "log": {
-    "disabled": false,
     "level": "info",
-    "output": "all.log",
-    "timestamp": true
+    "timestamp": true,
+    "output": "/var/log/sing-box/sing-box.log"
   },
+
   "inbounds": [
     {
       "type": "vless",
-      "tag": "vless-in",
+
+      "tag": "vless-reality",
+
       "listen": "::",
+
       "listen_port": 443,
-      "sniff": true,
+
       "users": [
         {
+          "uuid": "$UUID",
           "flow": "xtls-rprx-vision"
         }
       ],
+
+      "sniff": true,
+
       "tls": {
+
         "enabled": true,
+
         "server_name": "$DOMAIN",
-        "min_version": "1.3",
-        "max_version": "1.3",
+
         "reality": {
+
           "enabled": true,
+
           "handshake": {
-            "server": "127.0.0.1",
+            "server": "$DOMAIN",
             "server_port": 8443
           },
+
           "private_key": "$PRIVATE_KEY",
-          "short_id": ["$SHORT_ID"]
+
+          "short_id": [
+            "$SHORT_ID"
+          ]
         }
       }
     }
   ],
+
   "outbounds": [
     {
-      "type": "direct",
-      "tag": "direct-out"
+      "type": "direct"
     }
   ]
 }
-EOF
+EOCONFIG
 
-# 配置 nginx
-NGINX_FILE="/etc/nginx/sites-available/$DOMAIN.conf"
-if [ -f "$NGINX_FILE" ]; then
-  mv "$NGINX_FILE" "${NGINX_FILE}.bak"
-fi
+# =========================================================
+# 配置检查
+# =========================================================
 
-cat > "$NGINX_FILE" <<EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name $DOMAIN;
-    return 301 https://\$host:8443\$request_uri;
-}
+echo
+echo "=================================================="
+echo "检查配置"
+echo "=================================================="
 
-server {
-    listen 8443 ssl http2;
-    listen [::]:8443 ssl http2;
-    server_name $DOMAIN;
-    ssl_certificate      $SSL_CERT;
-    ssl_certificate_key  $SSL_KEY;
-    ssl_protocols TLSv1.3;
-    ssl_ecdh_curve X25519:prime256v1:secp384r1;
-    ssl_prefer_server_ciphers off;
+$SB_BIN check -c "$CONFIG_FILE"
 
-    location / {
-        add_header Content-Type 'text/html; charset=utf-8';
-        return 200 'OK';
-    }
-}
-EOF
+# =========================================================
+# systemd
+# =========================================================
 
-ln -sf "$NGINX_FILE" /etc/nginx/sites-enabled/
-nginx -t && systemctl restart nginx
+echo
+echo "=================================================="
+echo "配置 systemd"
+echo "=================================================="
 
-# 创建 systemd 服务
 SERVICE_FILE="/etc/systemd/system/sing-box.service"
-cat > "$SERVICE_FILE" <<EOF
+
+cat > "$SERVICE_FILE" <<EOSERVICE
 [Unit]
 Description=sing-box
-After=network.target
+After=network.target nss-lookup.target
 
 [Service]
+
 Type=simple
-ExecStart=/usr/local/bin/sing-box run -c $CONF_FILE -C /root/.sing-box/
+
+ExecStart=$SB_BIN run -c $CONFIG_FILE
+
 Restart=on-failure
-RestartSec=5s
+RestartSec=5
+
+LimitNOFILE=infinity
 
 [Install]
 WantedBy=multi-user.target
-EOF
+EOSERVICE
 
 systemctl daemon-reload
-systemctl enable --now sing-box
 
-# 输出信息
-echo "=========================================="
-echo "✅ Sing-box 服务端配置完成！"
-echo "=========================================="
-echo "📍 域名: $DOMAIN"
-echo "📜 证书路径: $SSL_CERT"
-echo "🔑 PrivateKey: $PRIVATE_KEY"
-echo "🔓 PublicKey:  $PUBLIC_KEY"
-echo "🧩 short_id:   $SHORT_ID"
-echo "⚙️ 配置文件: $CONF_FILE"
-echo "🛠️ systemd 服务已启用: sing-box.service"
-echo "运行命令:"
-echo "   systemctl status sing-box"
-echo "=========================================="
+systemctl enable sing-box
+
+systemctl restart sing-box
+
+# =========================================================
+# UFW
+# =========================================================
+
+echo
+echo "=================================================="
+echo "配置防火墙"
+echo "=================================================="
+
+ufw allow 22/tcp || true
+ufw allow 80/tcp || true
+ufw allow 443/tcp || true
+ufw allow 8443/tcp || true
+
+ufw --force enable
+
+# =========================================================
+# 完成
+# =========================================================
+
+echo
+echo "=================================================="
+echo "安装完成"
+echo "=================================================="
+
+echo
+echo "域名:"
+echo "$DOMAIN"
+
+echo
+echo "UUID:"
+echo "$UUID"
+
+echo
+echo "Reality Public Key:"
+echo "$PUBLIC_KEY"
+
+echo
+echo "Reality Short ID:"
+echo "$SHORT_ID"
+
+echo
+echo "配置文件:"
+echo "$CONFIG_FILE"
+
+echo
+echo "日志:"
+echo "/var/log/sing-box/sing-box.log"
+
+echo
+echo "systemctl:"
+echo "systemctl status sing-box"
+
+echo
+echo "=================================================="
+echo "客户端配置"
+echo "=================================================="
+
+cat <<EOCLIENT
+
+{
+  "server": "$DOMAIN",
+  "server_port": 443,
+
+  "uuid": "$UUID",
+
+  "flow": "xtls-rprx-vision",
+
+  "tls": {
+    "enabled": true,
+
+    "server_name": "$DOMAIN",
+
+    "reality": {
+      "enabled": true,
+
+      "public_key": "$PUBLIC_KEY",
+
+      "short_id": "$SHORT_ID"
+    }
+  }
+}
+
+EOCLIENT
+
+echo
+echo "=================================================="
+
+EOF
+
+chmod +x install.sh
+
+echo "install.sh 已生成"
